@@ -4,24 +4,28 @@
 //
 //  "English -> ASL" side of the translator. A hearing person types or
 //  speaks, and the app plays back the signed translation through an
-//  avatar/video area. The avatar renderer itself is a placeholder hook
-//  (`SignAvatarPlayer`) so a real 3D avatar or clip-stitching engine can
-//  be swapped in without touching this screen.
+//  avatar driven by the Sign Dictionary (pose + gloss + description).
 //
 
 import SwiftUI
+import UIKit
 
 struct TextToSignView: View {
+    @EnvironmentObject private var dictionary: SignDictionaryStore
+    @AppStorage("avatarPlaybackSpeed") private var playbackSpeed: Double = 1.0
+    @AppStorage("hapticFeedbackEnabled") private var hapticsEnabled: Bool = true
+
+    @StateObject private var speech = SpeechRecognizer()
     @State private var inputText: String = ""
     @State private var isPlaying: Bool = false
     @State private var lastTranslated: String = ""
+    @State private var playbackSigns: [SignEntry] = []
+    @State private var currentSignIndex: Int = 0
+    @State private var playbackTask: Task<Void, Never>?
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            // Avatar / sign playback area — stands in for the camera
-            // preview on the other side of the translator so both modes
-            // feel like mirror images of each other.
             ZStack {
                 RoundedRectangle(cornerRadius: 0)
                     .fill(Color(.secondarySystemBackground))
@@ -39,20 +43,38 @@ struct TextToSignView: View {
                     }
                 } else {
                     VStack(spacing: 16) {
-                        // Placeholder avatar figure; swap for a real
-                        // avatar/video renderer driven by `lastTranslated`.
-                        SignAvatarPlayer(isPlaying: $isPlaying)
-                            .frame(width: 160, height: 220)
+                        SignAvatarPlayer(
+                            signs: playbackSigns,
+                            currentIndex: currentSignIndex,
+                            isPlaying: isPlaying
+                        )
+                        .frame(maxWidth: 280)
+                        .frame(height: 260)
 
                         Text(lastTranslated)
                             .font(.headline)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 24)
 
+                        if !playbackSigns.isEmpty {
+                            Text(playbackSigns.map(\.aslGloss).joined(separator: " → "))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+                        }
+
                         Button {
-                            isPlaying.toggle()
+                            if isPlaying {
+                                stopPlayback()
+                            } else {
+                                startPlayback()
+                            }
                         } label: {
-                            Label(isPlaying ? "Playing…" : "Replay", systemImage: isPlaying ? "pause.fill" : "play.fill")
+                            Label(
+                                isPlaying ? "Playing…" : "Replay",
+                                systemImage: isPlaying ? "pause.fill" : "play.fill"
+                            )
                         }
                         .buttonStyle(.bordered)
                     }
@@ -62,7 +84,14 @@ struct TextToSignView: View {
 
             Divider()
 
-            // Text / mic input bar, styled like the input row in Translate.
+            if let error = speech.errorMessage {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+            }
+
             HStack(spacing: 12) {
                 TextField("Type in English…", text: $inputText, axis: .vertical)
                     .focused($isInputFocused)
@@ -70,16 +99,22 @@ struct TextToSignView: View {
                     .padding(.vertical, 10)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
                     .lineLimit(1...4)
+                    .onChange(of: speech.transcript) { _, newValue in
+                        guard speech.isRecording, !newValue.isEmpty else { return }
+                        inputText = newValue
+                    }
 
                 Button {
-                    // TODO: hook up speech-to-text (SFSpeechRecognizer)
+                    isInputFocused = false
+                    speech.toggle()
                 } label: {
-                    Image(systemName: "mic.fill")
+                    Image(systemName: speech.isRecording ? "stop.fill" : "mic.fill")
                         .font(.system(size: 18))
                         .foregroundStyle(.white)
                         .frame(width: 40, height: 40)
-                        .background(Color.accentColor, in: Circle())
+                        .background(speech.isRecording ? Color.red : Color.accentColor, in: Circle())
                 }
+                .accessibilityLabel(speech.isRecording ? "Stop listening" : "Dictate with microphone")
 
                 Button {
                     translate()
@@ -93,36 +128,124 @@ struct TextToSignView: View {
             .padding(12)
             .background(.bar)
         }
+        .onAppear { speech.requestAuthorization() }
+        .onDisappear {
+            speech.stop()
+            stopPlayback()
+        }
     }
 
     private func translate() {
-        // TODO: replace with real English -> ASL gloss translation.
-        lastTranslated = inputText
+        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        if speech.isRecording { speech.stop() }
+
+        lastTranslated = text
+        playbackSigns = dictionary.signs(forSentence: text)
         inputText = ""
         isInputFocused = false
+
+        if hapticsEnabled {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        }
+
+        startPlayback()
+    }
+
+    private func startPlayback() {
+        guard !playbackSigns.isEmpty else { return }
+        playbackTask?.cancel()
         isPlaying = true
+        currentSignIndex = 0
+
+        let speed = max(playbackSpeed, 0.4)
+        let holdNanos = UInt64((1.1 / speed) * 1_000_000_000)
+
+        playbackTask = Task { @MainActor in
+            while !Task.isCancelled && isPlaying {
+                if hapticsEnabled {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+                try? await Task.sleep(nanoseconds: holdNanos)
+                guard !Task.isCancelled, isPlaying else { break }
+                if currentSignIndex >= playbackSigns.count - 1 {
+                    isPlaying = false
+                    break
+                }
+                currentSignIndex += 1
+            }
+        }
+    }
+
+    private func stopPlayback() {
+        playbackTask?.cancel()
+        playbackTask = nil
+        isPlaying = false
     }
 }
 
-/// Stand-in for a real signing avatar. Shows a simple animated hand icon
-/// while "playing" so the UI reads correctly before a real renderer exists.
+/// Avatar that steps through dictionary signs: pose symbol, ASL gloss,
+/// and a short production note so English → ASL actually reflects signs.
 struct SignAvatarPlayer: View {
-    @Binding var isPlaying: Bool
+    let signs: [SignEntry]
+    let currentIndex: Int
+    let isPlaying: Bool
+
+    private var current: SignEntry? {
+        guard signs.indices.contains(currentIndex) else { return nil }
+        return signs[currentIndex]
+    }
 
     var body: some View {
-        VStack {
-            Image(systemName: "figure.wave")
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(Color.accentColor)
-                .symbolEffect(.pulse, isActive: isPlaying)
+        VStack(spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(Color(.systemBackground))
+                    .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
+
+                if let current {
+                    VStack(spacing: 12) {
+                        Image(systemName: current.symbolName)
+                            .font(.system(size: 72, weight: .medium))
+                            .foregroundStyle(Color.accentColor)
+                            .symbolEffect(.bounce, value: currentIndex)
+                            .symbolEffect(.pulse, isActive: isPlaying)
+                            .contentTransition(.symbolEffect(.replace))
+
+                        Text(current.aslGloss)
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(.primary)
+
+                        Text(current.description)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 16)
+                            .lineLimit(3)
+                    }
+                    .padding(.vertical, 20)
+                    .id(current.id)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                }
+            }
+
+            if signs.count > 1 {
+                HStack(spacing: 6) {
+                    ForEach(Array(signs.indices), id: \.self) { index in
+                        Capsule()
+                            .fill(index == currentIndex ? Color.accentColor : Color.secondary.opacity(0.25))
+                            .frame(width: index == currentIndex ? 18 : 7, height: 7)
+                    }
+                }
+                .animation(.spring(response: 0.35), value: currentIndex)
+            }
         }
-        .padding(20)
-        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 20))
-        .shadow(radius: 4)
+        .animation(.easeInOut(duration: 0.25), value: currentIndex)
     }
 }
 
 #Preview {
     TextToSignView()
+        .environmentObject(SignDictionaryStore())
 }

@@ -15,6 +15,10 @@
 		A10000000000000000000006 /* CameraManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* CameraManager.swift */; };
 		A10000000000000000000007 /* TranslateDirection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* TranslateDirection.swift */; };
 		A10000000000000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* Assets.xcassets */; };
+		A10000000000000000000009 /* DataStores.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* DataStores.swift */; };
+		A1000000000000000000000A /* SpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A /* SpeechRecognizer.swift */; };
+		A1000000000000000000000B /* FeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* FeedbackView.swift */; };
+		A1000000000000000000000C /* SignDictionaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* SignDictionaryView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,6 +30,10 @@
 		A20000000000000000000006 /* CameraManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraManager.swift; sourceTree = "<group>"; };
 		A20000000000000000000007 /* TranslateDirection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslateDirection.swift; sourceTree = "<group>"; };
 		A20000000000000000000008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000000000000000000009 /* DataStores.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataStores.swift; sourceTree = "<group>"; };
+		A2000000000000000000000A /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
+		A2000000000000000000000B /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
+		A2000000000000000000000C /* SignDictionaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignDictionaryView.swift; sourceTree = "<group>"; };
 		A30000000000000000000001 /* Version_0_1.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Version_0_1.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -58,6 +66,10 @@
 				A20000000000000000000005 /* SettingsView.swift */,
 				A20000000000000000000006 /* CameraManager.swift */,
 				A20000000000000000000007 /* TranslateDirection.swift */,
+				A20000000000000000000009 /* DataStores.swift */,
+				A2000000000000000000000A /* SpeechRecognizer.swift */,
+				A2000000000000000000000B /* FeedbackView.swift */,
+				A2000000000000000000000C /* SignDictionaryView.swift */,
 				A20000000000000000000008 /* Assets.xcassets */,
 			);
 			path = .;
@@ -147,6 +159,10 @@
 				A10000000000000000000005 /* SettingsView.swift in Sources */,
 				A10000000000000000000006 /* CameraManager.swift in Sources */,
 				A10000000000000000000007 /* TranslateDirection.swift in Sources */,
+				A10000000000000000000009 /* DataStores.swift in Sources */,
+				A1000000000000000000000A /* SpeechRecognizer.swift in Sources */,
+				A1000000000000000000000B /* FeedbackView.swift in Sources */,
+				A1000000000000000000000C /* SignDictionaryView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -283,6 +299,8 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is needed to read sign language.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Microphone access lets you speak English to translate into ASL.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition converts your spoken English into text for ASL translation.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -314,6 +332,8 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is needed to read sign language.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Microphone access lets you speak English to translate into ASL.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition converts your spoken English into text for ASL translation.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

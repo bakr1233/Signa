@@ -2,9 +2,8 @@
 //  SettingsView.swift
 //  Version_0_1
 //
-//  Replaces the original SettingView.swift with a fuller settings
-//  screen appropriate for a translator app: camera permission status,
-//  playback preferences for the sign avatar, and app info.
+//  Settings for camera status, avatar playback, plus working
+//  Sign Dictionary and Feedback collection screens.
 //
 
 import SwiftUI
@@ -46,19 +45,24 @@ struct SettingsView: View {
                     Toggle("Haptic feedback on translation", isOn: $hapticsEnabled)
                 }
 
+                Section("Community data") {
+                    NavigationLink {
+                        SignDictionaryView()
+                    } label: {
+                        Label("Sign Dictionary", systemImage: "book.fill")
+                    }
+                    NavigationLink {
+                        FeedbackView()
+                    } label: {
+                        Label("Send Feedback", systemImage: "envelope.fill")
+                    }
+                }
+
                 Section("About") {
                     HStack {
                         Text("Version")
                         Spacer()
                         Text("0.1")
-                            .foregroundStyle(.secondary)
-                    }
-                    NavigationLink("Sign Dictionary") {
-                        Text("Sign dictionary coming soon.")
-                            .foregroundStyle(.secondary)
-                    }
-                    NavigationLink("Send Feedback") {
-                        Text("Feedback form coming soon.")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -88,4 +92,6 @@ struct SettingsView: View {
 
 #Preview {
     SettingsView()
+        .environmentObject(SignDictionaryStore())
+        .environmentObject(FeedbackStore())
 }
