@@ -38,6 +38,7 @@ final class HandPoseRecognizer: ObservableObject {
     @Published var liveLabel: String = ""
     @Published var transcript: String = ""
     @Published var confidence: Double = 0
+    @Published var hasHandsInFrame: Bool = false
     /// Hand skeletons + body pose + face landmarks for the live overlay.
     @Published var trackingOverlay = TrackingOverlay()
     /// Latest class probabilities from the action LSTM (label, probability).
@@ -53,9 +54,9 @@ final class HandPoseRecognizer: ObservableObject {
 
     private var voteBuffer: [(label: String, score: Double)] = []
     /// Fast lock: ~3 agreeing frames (~0.1–0.2s) so tracking feels snappy.
-    private let voteWindow = 5
-    private let voteThreshold = 3
-    private let scoreGate = 0.60
+    private let voteWindow = 6
+    private let voteThreshold = 4
+    private let scoreGate = 0.7
 
     private var lostCount = 0
     private let clearAfterLostFrames = 14
@@ -108,6 +109,7 @@ final class HandPoseRecognizer: ObservableObject {
                 self.liveLabel = ""
                 self.transcript = ""
                 self.confidence = 0
+                self.hasHandsInFrame = false
                 self.trackingOverlay = TrackingOverlay()
                 self.actionProbabilities = []
             }
@@ -128,6 +130,7 @@ final class HandPoseRecognizer: ObservableObject {
                 self.liveLabel = ""
                 self.transcript = ""
                 self.confidence = 0
+                self.hasHandsInFrame = false
                 self.actionProbabilities = []
             }
         }
@@ -147,6 +150,7 @@ final class HandPoseRecognizer: ObservableObject {
             DispatchQueue.main.async {
                 self.liveLabel = ""
                 self.confidence = 0
+                self.hasHandsInFrame = false
                 self.trackingOverlay = TrackingOverlay()
                 self.actionProbabilities = []
             }
@@ -172,6 +176,16 @@ final class HandPoseRecognizer: ObservableObject {
             let head = Self.headPoint(from: self.bodyRequest.results?.first)
 
             let observations = self.request.results ?? []
+            let hasConfidentHand = observations.contains { observation in
+                guard let points = try? observation.recognizedPoints(.all) else { return false }
+                let keyJoints: [VNHumanHandPoseObservation.JointName] = [
+                    .wrist, .thumbTip, .indexTip, .middleTip, .ringTip, .littleTip
+                ]
+                let confidences = keyJoints.compactMap { points[$0]?.confidence }
+                guard confidences.count >= 4 else { return false }
+                let avg = confidences.reduce(0, +) / Float(confidences.count)
+                return avg >= 0.42
+            }
 
             // Full MediaPipe-style tracking overlay: hand skeletons, body
             // pose lines, and face landmark points.
@@ -192,11 +206,13 @@ final class HandPoseRecognizer: ObservableObject {
             )
             DispatchQueue.main.async {
                 self.trackingOverlay = overlay
+                self.hasHandsInFrame = hasConfidentHand
                 self.actionProbabilities = [] // UI bars removed
             }
 
             guard !observations.isEmpty else {
                 self.handsWereLost = true
+                DispatchQueue.main.async { self.hasHandsInFrame = false }
                 self.handleLost()
                 return
             }
@@ -336,6 +352,7 @@ final class HandPoseRecognizer: ObservableObject {
             DispatchQueue.main.async {
                 self.liveLabel = ""
                 self.confidence = 0
+                self.hasHandsInFrame = false
                 self.trackingOverlay = TrackingOverlay()
             }
         }
@@ -444,6 +461,7 @@ final class HandPoseRecognizer: ObservableObject {
         guard winner.value.n >= runnerUp + 1 else { return }
 
         let avgScore = winner.value.sum / Double(winner.value.n)
+        guard avgScore >= 0.78 else { return }
         let now = CFAbsoluteTimeGetCurrent()
 
         // Lock one word at a time. Same word can lock again after hands

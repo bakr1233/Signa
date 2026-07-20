@@ -179,6 +179,7 @@ final class CameraManager: NSObject, ObservableObject {
     private let frameStride = 1
     private var useCoreML = false
     private var useGemma = false
+    private var hasHandsForGemma = false
     private var didConfigure = false
     /// Session-queue copy of the active camera position.
     private var currentPosition: AVCaptureDevice.Position = .front
@@ -241,6 +242,16 @@ final class CameraManager: NSObject, ObservableObject {
         handPose.$actionProbabilities
             .receive(on: DispatchQueue.main)
             .assign(to: &$actionProbabilities)
+
+        handPose.$hasHandsInFrame
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] hasHands in
+                guard let self else { return }
+                self.sessionQueue.async {
+                    self.hasHandsForGemma = hasHands
+                }
+            }
+            .store(in: &cancellables)
 
         // Prefer full transcript for the caption while recognizing; fall back to live label.
         Publishers.CombineLatest4(
@@ -470,8 +481,12 @@ final class CameraManager: NSObject, ObservableObject {
         if useCoreML {
             classifier.ingest(pixelBuffer: pixelBuffer)
         } else if useGemma {
-            gemma.ingest(pixelBuffer: pixelBuffer)
             handPose.ingest(pixelBuffer: pixelBuffer, orientation: orientation)
+            if hasHandsForGemma {
+                gemma.ingest(pixelBuffer: pixelBuffer)
+            } else {
+                gemma.clearRecognizedLabel()
+            }
         } else {
             handPose.ingest(pixelBuffer: pixelBuffer, orientation: orientation)
         }
