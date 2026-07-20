@@ -1,0 +1,16 @@
+tensorflow>=2.15,<2.17
+coremltools>=7.2
+opencv-python>=4.9
+numpy>=1.26,<2.0
+tqdm>=4.66
+
+# Notes:
+# - numpy is pinned <2.0 because as of writing, coremltools + some
+#   TensorFlow builds are not yet fully validated against NumPy 2.x.
+#   If you hit numpy-related import errors, `pip install "numpy<2"`.
+# - Use tensorflow-macos + tensorflow-metal instead of `tensorflow` if
+#   training on an Apple Silicon Mac, for GPU acceleration:
+#     pip install tensorflow-macos tensorflow-metal
+# - A GPU (or Colab/cloud GPU) is strongly recommended for
+#   train_spatial_cnn.py; the RNN stage (train_rnn.py) is small and
+#   fine on CPU once features are extracted.

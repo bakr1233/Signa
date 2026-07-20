@@ -19,6 +19,13 @@
 		A1000000000000000000000A /* SpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A /* SpeechRecognizer.swift */; };
 		A1000000000000000000000B /* FeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* FeedbackView.swift */; };
 		A1000000000000000000000C /* SignDictionaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* SignDictionaryView.swift */; };
+		A1000000000000000000000E /* HandPoseRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* HandPoseRecognizer.swift */; };
+		A1000000000000000000000F /* GemmaSignRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* GemmaSignRecognizer.swift */; };
+		A10000000000000000000011 /* SigningAvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* SigningAvatarView.swift */; };
+		A10000000000000000000012 /* SigningAvatar3DView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* SigningAvatar3DView.swift */; };
+		A10000000000000000000013 /* ASLHandPoseClassifier.mlmodel in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* ASLHandPoseClassifier.mlmodel */; };
+		A10000000000000000000014 /* ActionSignRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* ActionSignRecognizer.swift */; };
+		A10000000000000000000015 /* ActionSignClassifier.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000015 /* ActionSignClassifier.mlpackage */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -34,6 +41,14 @@
 		A2000000000000000000000A /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
 		A2000000000000000000000B /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
 		A2000000000000000000000C /* SignDictionaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignDictionaryView.swift; sourceTree = "<group>"; };
+		A2000000000000000000000E /* HandPoseRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandPoseRecognizer.swift; sourceTree = "<group>"; };
+		A2000000000000000000000F /* GemmaSignRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GemmaSignRecognizer.swift; sourceTree = "<group>"; };
+		A20000000000000000000010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20000000000000000000011 /* SigningAvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SigningAvatarView.swift; sourceTree = "<group>"; };
+		A20000000000000000000012 /* SigningAvatar3DView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SigningAvatar3DView.swift; sourceTree = "<group>"; };
+		A20000000000000000000013 /* ASLHandPoseClassifier.mlmodel */ = {isa = PBXFileReference; lastKnownFileType = file.mlmodel; path = ASLHandPoseClassifier.mlmodel; sourceTree = "<group>"; };
+		A20000000000000000000014 /* ActionSignRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionSignRecognizer.swift; sourceTree = "<group>"; };
+		A20000000000000000000015 /* ActionSignClassifier.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = ActionSignClassifier.mlpackage; sourceTree = "<group>"; };
 		A30000000000000000000001 /* Version_0_1.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Version_0_1.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -70,6 +85,14 @@
 				A2000000000000000000000A /* SpeechRecognizer.swift */,
 				A2000000000000000000000B /* FeedbackView.swift */,
 				A2000000000000000000000C /* SignDictionaryView.swift */,
+				A2000000000000000000000E /* HandPoseRecognizer.swift */,
+				A2000000000000000000000F /* GemmaSignRecognizer.swift */,
+				A20000000000000000000011 /* SigningAvatarView.swift */,
+				A20000000000000000000012 /* SigningAvatar3DView.swift */,
+				A20000000000000000000013 /* ASLHandPoseClassifier.mlmodel */,
+				A20000000000000000000014 /* ActionSignRecognizer.swift */,
+				A20000000000000000000015 /* ActionSignClassifier.mlpackage */,
+				A20000000000000000000010 /* Info.plist */,
 				A20000000000000000000008 /* Assets.xcassets */,
 			);
 			path = .;
@@ -163,6 +186,13 @@
 				A1000000000000000000000A /* SpeechRecognizer.swift in Sources */,
 				A1000000000000000000000B /* FeedbackView.swift in Sources */,
 				A1000000000000000000000C /* SignDictionaryView.swift in Sources */,
+				A1000000000000000000000E /* HandPoseRecognizer.swift in Sources */,
+				A1000000000000000000000F /* GemmaSignRecognizer.swift in Sources */,
+				A10000000000000000000011 /* SigningAvatarView.swift in Sources */,
+				A10000000000000000000012 /* SigningAvatar3DView.swift in Sources */,
+				A10000000000000000000013 /* ASLHandPoseClassifier.mlmodel in Sources */,
+				A10000000000000000000014 /* ActionSignRecognizer.swift in Sources */,
+				A10000000000000000000015 /* ActionSignClassifier.mlpackage in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -298,7 +328,10 @@
 				DEVELOPMENT_TEAM = QS7RDAU52F;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Signa;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is needed to read sign language.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Signa connects to a Gemma vision server on your local network for ASL translation.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Microphone access lets you speak English to translate into ASL.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition converts your spoken English into text for ASL translation.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -312,7 +345,7 @@
 				);
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.signa.Version01;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = Signa;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -331,7 +364,10 @@
 				DEVELOPMENT_TEAM = QS7RDAU52F;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Signa;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is needed to read sign language.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Signa connects to a Gemma vision server on your local network for ASL translation.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Microphone access lets you speak English to translate into ASL.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition converts your spoken English into text for ASL translation.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -345,7 +381,7 @@
 				);
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.signa.Version01;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = Signa;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;

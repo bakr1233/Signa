@@ -1,0 +1,18 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+pillow>=10.2
+torch>=2.2
+accelerate>=0.28
+huggingface_hub>=0.23
+
+# Gemma 4 needs Transformers main (PyPI releases may not include `gemma4` yet):
+transformers @ git+https://github.com/huggingface/transformers.git
+
+# Notes:
+# - Accept Gemma terms on the model page, then:
+#     hf auth login
+#   or: export HF_TOKEN=hf_...
+# - On Apple Silicon, install a Metal-capable torch build from pytorch.org if needed.
+# - Default model is google/gemma-4-E4B-it. For 31B set:
+#     export GEMMA_MODEL=google/gemma-4-31B-it

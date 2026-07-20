@@ -22,5 +22,22 @@ Package.resolved
 # CocoaPods
 Pods/
 
+# ML pipeline artifacts
+ml/**/train_videos/
+ml/**/test_videos/
+ml/**/train_frames/
+ml/**/test_frames/
+ml/**/*.keras
+ml/**/*.pkl
+ml/**/*.h5
+ml/**/coreml_out/
+ml/**/labels.txt
+ml/**/results.csv
+ml/gemma_server/.venv/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
 # Misc
 *.log

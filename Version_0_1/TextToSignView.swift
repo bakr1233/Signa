@@ -2,9 +2,7 @@
 //  TextToSignView.swift
 //  Version_0_1
 //
-//  "English -> ASL" side of the translator. A hearing person types or
-//  speaks, and the app plays back the signed translation through an
-//  avatar driven by the Sign Dictionary (pose + gloss + description).
+//  English → ASL with an animated skeletal signing avatar.
 //
 
 import SwiftUI
@@ -21,6 +19,7 @@ struct TextToSignView: View {
     @State private var lastTranslated: String = ""
     @State private var playbackSigns: [SignEntry] = []
     @State private var currentSignIndex: Int = 0
+    @State private var signProgress: Double = 0
     @State private var playbackTask: Task<Void, Never>?
     @FocusState private var isInputFocused: Bool
 
@@ -33,50 +32,72 @@ struct TextToSignView: View {
 
                 if lastTranslated.isEmpty {
                     VStack(spacing: 10) {
-                        Image(systemName: "hand.raised.fill")
+                        Image(systemName: "figure.stand")
                             .font(.system(size: 44))
                             .foregroundStyle(.secondary)
-                        Text("Type or speak English below\nto see it signed here")
+                        Text("Type or speak English below\nto see it signed with motion")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     }
                 } else {
-                    VStack(spacing: 16) {
-                        SignAvatarPlayer(
+                    VStack(spacing: 14) {
+                        SigningAvatar3DView(
                             signs: playbackSigns,
                             currentIndex: currentSignIndex,
-                            isPlaying: isPlaying
+                            isPlaying: isPlaying,
+                            signProgress: signProgress
                         )
-                        .frame(maxWidth: 280)
-                        .frame(height: 260)
+                        .frame(maxWidth: 220)
+                        .frame(height: 280)
+                        .padding(.top, 8)
 
                         Text(lastTranslated)
                             .font(.headline)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 24)
 
+                        if playbackSigns.indices.contains(currentSignIndex) {
+                            Text(playbackSigns[currentSignIndex].aslGloss)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(Color.accentColor)
+                        }
+
                         if !playbackSigns.isEmpty {
                             Text(playbackSigns.map(\.aslGloss).joined(separator: " → "))
-                                .font(.caption.weight(.semibold))
+                                .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 24)
                         }
 
-                        Button {
-                            if isPlaying {
-                                stopPlayback()
-                            } else {
-                                startPlayback()
+                        HStack(spacing: 12) {
+                            Button {
+                                if isPlaying {
+                                    stopPlayback()
+                                } else {
+                                    startPlayback()
+                                }
+                            } label: {
+                                Label(
+                                    isPlaying ? "Playing…" : "Replay",
+                                    systemImage: isPlaying ? "pause.fill" : "play.fill"
+                                )
                             }
-                        } label: {
-                            Label(
-                                isPlaying ? "Playing…" : "Replay",
-                                systemImage: isPlaying ? "pause.fill" : "play.fill"
-                            )
+                            .buttonStyle(.bordered)
+
+                            Button {
+                                stopPlayback()
+                                lastTranslated = ""
+                                playbackSigns = []
+                                currentSignIndex = 0
+                                signProgress = 0
+                            } label: {
+                                Label("Clear", systemImage: "arrow.counterclockwise")
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
+                        .padding(.bottom, 8)
                     }
                 }
             }
@@ -114,7 +135,6 @@ struct TextToSignView: View {
                         .frame(width: 40, height: 40)
                         .background(speech.isRecording ? Color.red : Color.accentColor, in: Circle())
                 }
-                .accessibilityLabel(speech.isRecording ? "Stop listening" : "Dictate with microphone")
 
                 Button {
                     translate()
@@ -158,22 +178,32 @@ struct TextToSignView: View {
         playbackTask?.cancel()
         isPlaying = true
         currentSignIndex = 0
+        signProgress = 0
 
         let speed = max(playbackSpeed, 0.4)
-        let holdNanos = UInt64((1.1 / speed) * 1_000_000_000)
-
+        // Letters fingerspell a bit faster; whole words a bit longer.
         playbackTask = Task { @MainActor in
             while !Task.isCancelled && isPlaying {
+                let currentIsLetter = playbackSigns.indices.contains(currentSignIndex)
+                    && playbackSigns[currentSignIndex].english.count == 1
+                let duration = (currentIsLetter ? 0.55 : 0.95) / speed
+                let steps = currentIsLetter ? 14 : 22
+                for step in 0...steps {
+                    guard !Task.isCancelled, isPlaying else { return }
+                    signProgress = Double(step) / Double(steps)
+                    try? await Task.sleep(nanoseconds: UInt64((duration / Double(steps)) * 1_000_000_000))
+                }
                 if hapticsEnabled {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
-                try? await Task.sleep(nanoseconds: holdNanos)
-                guard !Task.isCancelled, isPlaying else { break }
+                guard !Task.isCancelled, isPlaying else { return }
                 if currentSignIndex >= playbackSigns.count - 1 {
                     isPlaying = false
+                    signProgress = 1
                     break
                 }
                 currentSignIndex += 1
+                signProgress = 0
             }
         }
     }
@@ -182,66 +212,6 @@ struct TextToSignView: View {
         playbackTask?.cancel()
         playbackTask = nil
         isPlaying = false
-    }
-}
-
-/// Avatar that steps through dictionary signs: pose symbol, ASL gloss,
-/// and a short production note so English → ASL actually reflects signs.
-struct SignAvatarPlayer: View {
-    let signs: [SignEntry]
-    let currentIndex: Int
-    let isPlaying: Bool
-
-    private var current: SignEntry? {
-        guard signs.indices.contains(currentIndex) else { return nil }
-        return signs[currentIndex]
-    }
-
-    var body: some View {
-        VStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(Color(.systemBackground))
-                    .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
-
-                if let current {
-                    VStack(spacing: 12) {
-                        Image(systemName: current.symbolName)
-                            .font(.system(size: 72, weight: .medium))
-                            .foregroundStyle(Color.accentColor)
-                            .symbolEffect(.bounce, value: currentIndex)
-                            .symbolEffect(.pulse, isActive: isPlaying)
-                            .contentTransition(.symbolEffect(.replace))
-
-                        Text(current.aslGloss)
-                            .font(.title2.weight(.bold))
-                            .foregroundStyle(.primary)
-
-                        Text(current.description)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 16)
-                            .lineLimit(3)
-                    }
-                    .padding(.vertical, 20)
-                    .id(current.id)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                }
-            }
-
-            if signs.count > 1 {
-                HStack(spacing: 6) {
-                    ForEach(Array(signs.indices), id: \.self) { index in
-                        Capsule()
-                            .fill(index == currentIndex ? Color.accentColor : Color.secondary.opacity(0.25))
-                            .frame(width: index == currentIndex ? 18 : 7, height: 7)
-                    }
-                }
-                .animation(.spring(response: 0.35), value: currentIndex)
-            }
-        }
-        .animation(.easeInOut(duration: 0.25), value: currentIndex)
     }
 }
 
