@@ -52,6 +52,14 @@ final class GemmaSignRecognizer: ObservableObject {
         }
     }
 
+    func clearRecognizedLabel() {
+        DispatchQueue.main.async {
+            if !self.recognizedLabel.isEmpty {
+                self.recognizedLabel = ""
+            }
+        }
+    }
+
     /// Safe to call from the camera session queue. Encodes JPEG immediately,
     /// then POSTs asynchronously (at most one in-flight, ~1.5s throttle).
     func ingest(pixelBuffer: CVPixelBuffer) {
@@ -83,11 +91,10 @@ final class GemmaSignRecognizer: ObservableObject {
             do {
                 let label = try await postAnalyze(url: url, jpeg: jpeg)
                 let cleaned = Self.clean(label)
+                let normalized = ASLVocabulary.canonicalLabel(from: cleaned)
                 DispatchQueue.main.async {
                     self.lastError = nil
-                    if cleaned.uppercased() != "UNKNOWN", !cleaned.isEmpty {
-                        self.recognizedLabel = cleaned
-                    }
+                    self.recognizedLabel = normalized ?? ""
                 }
                 finish(error: nil)
             } catch {
@@ -170,4 +177,65 @@ final class GemmaSignRecognizer: ObservableObject {
 private struct AnalyzeResponse: Decodable {
     let label: String
     let model: String?
+}
+
+private enum ASLVocabulary {
+    private static let canonicalDisplay: [String: String] = [
+        "hello": "Hello", "hi": "Hi", "goodbye": "Goodbye", "bye": "Bye",
+        "thanks": "Thanks", "thank you": "Thank you", "please": "Please",
+        "yes": "Yes", "no": "No", "how": "How", "are": "Are", "you": "You",
+        "i": "I", "me": "Me", "my": "My", "your": "Your", "his": "His",
+        "her": "Her", "our": "Our", "name": "Name", "what": "What",
+        "where": "Where", "why": "Why", "who": "Who", "when": "When",
+        "good": "Good", "bad": "Bad", "nice": "Nice", "fine": "Fine",
+        "love": "Love", "i love you": "I love you", "help": "Help",
+        "sorry": "Sorry", "friend": "Friend", "meet": "Meet",
+        "family": "Family", "eat": "Eat", "drink": "Drink", "water": "Water",
+        "ok": "OK", "peace": "Peace", "see": "See", "look": "Look",
+        "want": "Want", "need": "Need", "like": "Like", "more": "More",
+        "finish": "Finish", "stop": "Stop", "go": "Go", "come": "Come",
+        "know": "Know", "understand": "Understand", "don't know": "Don't know",
+        "mother": "Mother", "father": "Father", "boy": "Boy", "girl": "Girl",
+        "man": "Man", "woman": "Woman", "school": "School", "work": "Work",
+        "home": "Home", "book": "Book", "today": "Today", "tomorrow": "Tomorrow",
+        "yesterday": "Yesterday", "now": "Now", "later": "Later",
+        "again": "Again", "morning": "Morning", "night": "Night",
+        "bathroom": "Bathroom", "happy": "Happy", "sad": "Sad",
+        "tired": "Tired", "hungry": "Hungry", "sleep": "Sleep",
+        "how are you": "How are you", "what's your name": "What's your name",
+        "yes please": "Yes please", "no thanks": "No thanks",
+        "letters": "Letters"
+    ]
+
+    private static let aliases: [String: String] = [
+        "thankyou": "thank you",
+        "i-love-you": "i love you",
+        "dont know": "don't know",
+        "do not know": "don't know",
+        "what is your name": "what's your name",
+        "whats your name": "what's your name",
+        "good bye": "goodbye"
+    ]
+
+    static func canonicalLabel(from raw: String) -> String? {
+        let lowered = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !lowered.isEmpty else { return nil }
+        let compact = lowered.replacingOccurrences(of: "_", with: " ")
+        let normalized = compact
+            .components(separatedBy: CharacterSet.letters.union(.whitespaces).union(CharacterSet(charactersIn: "'")).inverted)
+            .joined()
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if normalized == "unknown" || normalized == "no sign" || normalized == "none" {
+            return nil
+        }
+        if let direct = canonicalDisplay[normalized] {
+            return direct
+        }
+        if let alias = aliases[normalized], let canonical = canonicalDisplay[alias] {
+            return canonical
+        }
+        return nil
+    }
 }
