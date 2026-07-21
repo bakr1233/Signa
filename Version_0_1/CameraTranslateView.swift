@@ -22,17 +22,9 @@ struct CameraTranslateView: View {
                 CameraPreviewView(session: camera.session)
                     .ignoresSafeArea()
 
-                // MediaPipe-holistic-style tracking overlay:
-                // green face mesh dots, magenta hand skeletons, body lines.
-                if isRecording, !camera.trackingOverlay.isEmpty {
-                    GeometryReader { _ in
-                        Canvas { context, size in
-                            drawTracking(context: context, size: size, overlay: camera.trackingOverlay)
-                        }
-                        .allowsHitTesting(false)
-                    }
-                    .ignoresSafeArea()
-                }
+                // Tracking (hands / body / face) still runs for recognition;
+                // the skeleton overlay is intentionally not drawn on screen.
+                // To show it again, re-add a Canvas calling drawTracking(_:).
             } else {
                 Color.black.ignoresSafeArea()
                 VStack(spacing: 12) {

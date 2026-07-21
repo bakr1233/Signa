@@ -477,7 +477,11 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     private func classify(pixelBuffer: CVPixelBuffer) {
-        let orientation: CGImagePropertyOrientation = currentPosition == .front ? .upMirrored : .up
+        // The output connection already mirrors front-camera frames to match
+        // the (auto-mirrored) preview layer, so the buffer Vision sees is
+        // exactly what's on screen. Passing .upMirrored here flipped the
+        // coordinates AGAIN, drawing the skeleton on the wrong side.
+        let orientation: CGImagePropertyOrientation = .up
         if useCoreML {
             classifier.ingest(pixelBuffer: pixelBuffer)
         } else if useGemma {

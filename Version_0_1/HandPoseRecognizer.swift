@@ -53,19 +53,24 @@ final class HandPoseRecognizer: ObservableObject {
     private let workQueue = DispatchQueue(label: "signa.hand.pose", qos: .userInitiated)
 
     private var voteBuffer: [(label: String, score: Double)] = []
-    /// Fast lock: ~3 agreeing frames (~0.1–0.2s) so tracking feels snappy.
-    private let voteWindow = 6
-    private let voteThreshold = 4
+    /// A sign must be held ~0.5s (7 of 10 frames agreeing) before it locks —
+    /// slower, but stops hand transitions from spamming words.
+    private let voteWindow = 10
+    private let voteThreshold = 7
     private let scoreGate = 0.7
 
     private var lostCount = 0
     private let clearAfterLostFrames = 14
     private var lastLocked: String = ""
     private var lastLockTime: CFAbsoluteTime = 0
-    private let lockCooldown: CFAbsoluteTime = 0.55
+    private let lockCooldown: CFAbsoluteTime = 0.9
     private var frameTick = 0
     /// After hands leave the frame, allow locking the same word again.
     private var handsWereLost = false
+    /// Frames since the last lock where NO sign matched (hand relaxed,
+    /// moving between signs, or out of frame). A new word may only lock
+    /// after a brief neutral gap, so one gesture can't chain into three.
+    private var neutralSinceLock = 99
 
     private var wristHistory: [CGPoint] = []
     private let historyLimit = 16
@@ -104,6 +109,7 @@ final class HandPoseRecognizer: ObservableObject {
             self.wristHistory.removeAll()
             self.headDistHistory.removeAll()
             self.handsWereLost = false
+            self.neutralSinceLock = 99
             self.actionModel.reset()
             DispatchQueue.main.async {
                 self.liveLabel = ""
@@ -123,6 +129,7 @@ final class HandPoseRecognizer: ObservableObject {
             self.lastLocked = ""
             self.lastLockTime = 0
             self.handsWereLost = false
+            self.neutralSinceLock = 99
             self.wristHistory.removeAll()
             self.headDistHistory.removeAll()
             self.actionModel.reset()
@@ -144,6 +151,7 @@ final class HandPoseRecognizer: ObservableObject {
             self.lastLocked = ""
             self.lastLockTime = 0
             self.handsWereLost = false
+            self.neutralSinceLock = 99
             self.wristHistory.removeAll()
             self.headDistHistory.removeAll()
             self.actionModel.reset()
@@ -176,7 +184,7 @@ final class HandPoseRecognizer: ObservableObject {
             let head = Self.headPoint(from: self.bodyRequest.results?.first)
 
             let observations = self.request.results ?? []
-            let hasConfidentHand = observations.contains { observation in
+            let confidentHandCount = observations.filter { observation in
                 guard let points = try? observation.recognizedPoints(.all) else { return false }
                 let keyJoints: [VNHumanHandPoseObservation.JointName] = [
                     .wrist, .thumbTip, .indexTip, .middleTip, .ringTip, .littleTip
@@ -185,7 +193,8 @@ final class HandPoseRecognizer: ObservableObject {
                 guard confidences.count >= 4 else { return false }
                 let avg = confidences.reduce(0, +) / Float(confidences.count)
                 return avg >= 0.42
-            }
+            }.count
+            let hasConfidentHand = confidentHandCount > 0
 
             // Full MediaPipe-style tracking overlay: hand skeletons, body
             // pose lines, and face landmark points.
@@ -216,11 +225,26 @@ final class HandPoseRecognizer: ObservableObject {
                 self.handleLost()
                 return
             }
+            // A blurry blob near the lens can register as a low-confidence
+            // "hand" — never classify those frames.
+            guard hasConfidentHand else {
+                self.handleLost(soft: true)
+                return
+            }
             self.handsWereLost = false
 
             // Classify the most confident hand only — mixing two hands
-            // often flips between unrelated signs.
+            // often flips between unrelated signs. The second hand's wrist
+            // is still tracked so two-handed signs (Stop) can require the
+            // chopping hand to actually meet the base hand.
             let primary = observations.max(by: { $0.confidence < $1.confidence })
+            let otherWrist: CGPoint? = observations
+                .filter { $0 !== primary }
+                .compactMap { obs -> CGPoint? in
+                    guard let pts = try? obs.recognizedPoints(.all) else { return nil }
+                    return Self.point(pts, .wrist, minConfidence: 0.3)
+                }
+                .first
             var geometryBest: (String, Double)? = nil
 
             if let observation = primary,
@@ -255,7 +279,8 @@ final class HandPoseRecognizer: ObservableObject {
                         }
 
                         let motion = Self.motionFeatures(history: self.wristHistory, headDistances: self.headDistHistory)
-                        if let result = Self.classify(points: points, motion: motion, head: head) {
+                        if let result = Self.classify(points: points, motion: motion, head: head,
+                                                      otherWrist: otherWrist) {
                             geometryBest = (result.0, max(result.1, avg * result.1))
                         } else {
                             // Fingerspelling fallback; skip near the head.
@@ -286,7 +311,8 @@ final class HandPoseRecognizer: ObservableObject {
                 }
             } else if let actionResult,
                       actionLabels.contains(actionResult.0),
-                      actionResult.1 >= 0.88 {
+                      actionResult.1 >= 0.92,
+                      head != nil {
                 best = actionResult
             } else {
                 best = nil
@@ -340,11 +366,14 @@ final class HandPoseRecognizer: ObservableObject {
 
     private func handleLost(soft: Bool = false) {
         lostCount += 1
+        neutralSinceLock = min(neutralSinceLock + 1, 99)
         // Soft loss (hand still visible, no label): keep recent votes so a
-        // brief ambiguous frame doesn't restart the whole window.
+        // brief ambiguous frame doesn't restart the whole window. Motion
+        // signs (Sorry, Please, Where) flicker to nil mid-gesture, so allow
+        // several such frames before the vote resets.
         if !soft {
             voteBuffer.removeAll()
-        } else if lostCount >= 4 {
+        } else if lostCount >= 7 {
             voteBuffer.removeAll()
         }
         if lostCount >= clearAfterLostFrames {
@@ -464,6 +493,26 @@ final class HandPoseRecognizer: ObservableObject {
         guard avgScore >= 0.78 else { return }
         let now = CFAbsoluteTimeGetCurrent()
 
+        // After a word locks, the hand must pass through a neutral moment
+        // (a few frames with no recognized sign) before ANY new word can
+        // lock. This stops one gesture + its wind-down from producing
+        // "OK Thanks My" in a single motion. Exception: if the previous
+        // word has completely vanished from the vote window — the signer
+        // flowed straight into a clearly different sign (Yes → next word)
+        // — the new word may lock without the neutral pause.
+        if !lastLocked.isEmpty, neutralSinceLock < 3 {
+            let oldWordGone = counts[lastLocked] == nil
+            if winner.key == lastLocked {
+                voteBuffer.removeAll()
+                return
+            }
+            if !oldWordGone {
+                // Old word still echoing in the window — let its votes age
+                // out (don't clear, or the new word could never build up).
+                return
+            }
+        }
+
         // Lock one word at a time. Same word can lock again after hands
         // left the frame (or a long cooldown), so "Hello Hello" is possible.
         let isNewWord = winner.key != lastLocked
@@ -476,6 +525,7 @@ final class HandPoseRecognizer: ObservableObject {
         lastLocked = winner.key
         lastLockTime = now
         handsWereLost = false
+        neutralSinceLock = 0
         DispatchQueue.main.async {
             self.liveLabel = winner.key
             self.confidence = avgScore
@@ -496,6 +546,9 @@ final class HandPoseRecognizer: ObservableObject {
         var verticalDrift: CGFloat
         var isWaving: Bool
         var isPushingOut: Bool
+        /// Wrist is travelling downward across the recent window — the
+        /// signature of the Stop chop onto the base hand.
+        var isMovingDown: Bool
         /// Hand was recently near the head and is now moving away from it —
         /// the outward half of the Hello salute.
         var isLeavingHead: Bool
@@ -512,13 +565,15 @@ final class HandPoseRecognizer: ObservableObject {
             let recent = headDistances.suffix(3)
             let earlyMin = firstHalf.min() ?? .greatestFiniteMagnitude
             let recentAvg = recent.reduce(0, +) / CGFloat(recent.count)
-            // Started close to the head, now clearly further away.
-            isLeavingHead = earlyMin < 0.24 && recentAvg > earlyMin + 0.05
+            // Started close to the head/chin, now clearly further away.
+            // 0.30 covers a hand at the chin whose WRIST sits well below
+            // the nose — 0.24 was too tight and made Thanks unreliable.
+            isLeavingHead = earlyMin < 0.30 && recentAvg > earlyMin + 0.04
         }
 
         guard history.count >= 4 else {
             return MotionFeatures(speed: 0, lateralSwing: 0, verticalDrift: 0,
-                                  isWaving: false, isPushingOut: false,
+                                  isWaving: false, isPushingOut: false, isMovingDown: false,
                                   isLeavingHead: isLeavingHead, minHeadDistance: minHeadDistance)
         }
         var path: CGFloat = 0
@@ -533,12 +588,18 @@ final class HandPoseRecognizer: ObservableObject {
         // Wave: strong left-right oscillation with modest vertical move.
         let isWaving = lateral > 0.08 && lateral > vertical * 1.35 && speed > 0.012
         let isPushingOut = vertical > 0.06 && speed > 0.01 && !isWaving
+        // Downward travel: recent positions clearly below the earlier ones
+        // (Vision is y-up, so falling y = hand moving down).
+        let earlyY = history.prefix(3).reduce(0) { $0 + $1.y } / 3
+        let lateY = history.suffix(3).reduce(0) { $0 + $1.y } / 3
+        let isMovingDown = earlyY - lateY > 0.04 && !isWaving
         return MotionFeatures(
             speed: speed,
             lateralSwing: lateral,
             verticalDrift: vertical,
             isWaving: isWaving,
             isPushingOut: isPushingOut,
+            isMovingDown: isMovingDown,
             isLeavingHead: isLeavingHead,
             minHeadDistance: minHeadDistance
         )
@@ -553,6 +614,10 @@ final class HandPoseRecognizer: ObservableObject {
         var middleTip: CGPoint, middlePIP: CGPoint, middleMCP: CGPoint
         var ringTip: CGPoint, ringPIP: CGPoint, ringMCP: CGPoint
         var littleTip: CGPoint, littlePIP: CGPoint, littleMCP: CGPoint
+        /// How many of the four fingertips Vision ACTUALLY saw (vs. the
+        /// PIP fallback). A palm pressed flat on the chest hides its tips
+        /// and would otherwise be indistinguishable from a fist.
+        var realTipCount: Int
     }
 
     private static func point(_ points: [VNHumanHandPoseObservation.JointName: VNRecognizedPoint],
@@ -586,25 +651,36 @@ final class HandPoseRecognizer: ObservableObject {
     }
 
     private static func digits(from points: [VNHumanHandPoseObservation.JointName: VNRecognizedPoint]) -> Digits? {
-        // Slightly lower joint confidence so partial occlusions still classify.
+        // Core joints (wrist, knuckles) must be tracked. Curled fingertips
+        // are often OCCLUDED in a fist and drop below any threshold — those
+        // fall back to their PIP joint, which correctly reads as "curled".
+        // Without this, fist signs (Sorry, Yes, No) never classified at all.
         guard
-            let wrist = point(points, .wrist, minConfidence: 0.4),
-            let thumbTip = point(points, .thumbTip, minConfidence: 0.4),
-            let thumbIP = point(points, .thumbIP, minConfidence: 0.35),
-            let thumbMP = point(points, .thumbMP, minConfidence: 0.35),
-            let indexTip = point(points, .indexTip, minConfidence: 0.4),
-            let indexPIP = point(points, .indexPIP, minConfidence: 0.35),
-            let indexMCP = point(points, .indexMCP, minConfidence: 0.35),
-            let middleTip = point(points, .middleTip, minConfidence: 0.4),
-            let middlePIP = point(points, .middlePIP, minConfidence: 0.35),
-            let middleMCP = point(points, .middleMCP, minConfidence: 0.35),
-            let ringTip = point(points, .ringTip, minConfidence: 0.35),
-            let ringPIP = point(points, .ringPIP, minConfidence: 0.3),
-            let ringMCP = point(points, .ringMCP, minConfidence: 0.3),
-            let littleTip = point(points, .littleTip, minConfidence: 0.35),
-            let littlePIP = point(points, .littlePIP, minConfidence: 0.3),
-            let littleMCP = point(points, .littleMCP, minConfidence: 0.3)
+            let wrist = point(points, .wrist, minConfidence: 0.35),
+            let thumbTip = point(points, .thumbTip, minConfidence: 0.3),
+            let thumbIP = point(points, .thumbIP, minConfidence: 0.25),
+            let thumbMP = point(points, .thumbMP, minConfidence: 0.25),
+            let indexPIP = point(points, .indexPIP, minConfidence: 0.25),
+            let indexMCP = point(points, .indexMCP, minConfidence: 0.25),
+            let middlePIP = point(points, .middlePIP, minConfidence: 0.25),
+            let middleMCP = point(points, .middleMCP, minConfidence: 0.25),
+            let ringPIP = point(points, .ringPIP, minConfidence: 0.2),
+            let ringMCP = point(points, .ringMCP, minConfidence: 0.2),
+            let littlePIP = point(points, .littlePIP, minConfidence: 0.2),
+            let littleMCP = point(points, .littleMCP, minConfidence: 0.2)
         else { return nil }
+
+        let realIndexTip = point(points, .indexTip, minConfidence: 0.3)
+        let realMiddleTip = point(points, .middleTip, minConfidence: 0.3)
+        let realRingTip = point(points, .ringTip, minConfidence: 0.25)
+        let realLittleTip = point(points, .littleTip, minConfidence: 0.25)
+        let realTipCount = [realIndexTip, realMiddleTip, realRingTip, realLittleTip]
+            .compactMap { $0 }.count
+
+        let indexTip = realIndexTip ?? indexPIP
+        let middleTip = realMiddleTip ?? middlePIP
+        let ringTip = realRingTip ?? ringPIP
+        let littleTip = realLittleTip ?? littlePIP
 
         return Digits(
             wrist: wrist,
@@ -612,19 +688,23 @@ final class HandPoseRecognizer: ObservableObject {
             indexTip: indexTip, indexPIP: indexPIP, indexMCP: indexMCP,
             middleTip: middleTip, middlePIP: middlePIP, middleMCP: middleMCP,
             ringTip: ringTip, ringPIP: ringPIP, ringMCP: ringMCP,
-            littleTip: littleTip, littlePIP: littlePIP, littleMCP: littleMCP
+            littleTip: littleTip, littlePIP: littlePIP, littleMCP: littleMCP,
+            realTipCount: realTipCount
         )
     }
 
     private static func classify(
         points: [VNHumanHandPoseObservation.JointName: VNRecognizedPoint],
         motion: MotionFeatures,
-        head: CGPoint?
+        head: CGPoint?,
+        otherWrist: CGPoint?
     ) -> (String, Double)? {
         guard let d = digits(from: points) else { return nil }
 
-        let span = max(distance(d.indexTip, d.littleTip), distance(d.wrist, d.middleTip))
-        guard span > 0.11 else { return nil }
+        // Lower floor than before — a closed fist is compact and was being
+        // rejected outright, which silently disabled Sorry / Yes / No.
+        let span = max(distance(d.indexTip, d.littleTip), distance(d.wrist, d.middleMCP))
+        guard span > 0.07 else { return nil }
 
         let thumbExt = isThumbExtended(tip: d.thumbTip, ip: d.thumbIP, mp: d.thumbMP)
         let indexExt = isFingerExtended(tip: d.indexTip, pip: d.indexPIP, mcp: d.indexMCP)
@@ -639,187 +719,241 @@ final class HandPoseRecognizer: ObservableObject {
         let openPalm = indexExt && middleExt && ringExt && littleExt && distance(d.indexTip, d.littleTip) > 0.11
         let extendedCount = [indexExt, middleExt, ringExt, littleExt].filter { $0 }.count
 
-        let headDistance = head.map { distance(d.wrist, $0) }
-        let nearHead = (headDistance ?? 1) < 0.28
+        let headDistance = head.map { distance(d.wrist, $0) } ?? 1
         // Fingertips at/above the head line — a raised, salute-like hand.
         let handRaisedToHead = head.map { d.middleTip.y > $0.y - 0.10 } ?? false
+        // Signs located on the body (chin, chest) require an actual person
+        // in frame. Without a head there is no chin/chest — otherwise a
+        // hand in front of a table can "sign" Thanks or My.
+        let hasPerson = head != nil
 
-        // Hello: salute — flat-ish hand at the forehead/temple, then moving
-        // away from the head. Checked FIRST because an edge-on salute often
-        // loses middle/ring joints and gets mistaken for other shapes.
-        if extendedCount >= 3, !indexCurl, !middleCurl {
-            if motion.isLeavingHead, motion.minHeadDistance < 0.26 {
-                return ("Hello", 0.96)
+        // ------------------------------------------------------------------
+        // ZONES — mutually exclusive, head-relative regions. The same
+        // handshape means a different word in each zone (a fist is Sorry on
+        // the chest but Yes in neutral space; thumb+pinky is Drink at the
+        // mouth but Help in neutral space). Every sign below is matched in
+        // exactly ONE zone, so chin and chest can never both claim a hand.
+        // ------------------------------------------------------------------
+        enum Zone { case head, chin, chest, neutral }
+        let zone: Zone
+        if let head {
+            let below = head.y - d.wrist.y            // + = wrist below head
+            let lateral = abs(d.wrist.x - head.x)
+            if headDistance < 0.26, below < 0.12 {
+                zone = .head
+            } else if below >= 0, below < 0.26, lateral < 0.30 {
+                zone = .chin
+            } else if below >= 0.26, below < 0.60, lateral < 0.34 {
+                zone = .chest
+            } else {
+                zone = .neutral
             }
-            if nearHead, handRaisedToHead {
-                return ("Hello", 0.9)
-            }
+        } else {
+            zone = .neutral
         }
 
-        let onChest = d.wrist.y > 0.32 && d.wrist.y < 0.58 && !nearHead
-        let nearChin = head.map { d.wrist.y > $0.y - 0.30 && d.wrist.y < $0.y + 0.02 } ?? (d.wrist.y > 0.52)
+        // Handshapes.
         let pointing =
             indexExt && !middleExt && !ringExt &&
             (littleCurl || !littleExt) &&
             (middleCurl || distance(d.middleTip, d.middleMCP) < 0.09)
-
-        // OK
-        if distance(d.thumbTip, d.indexTip) < 0.055, middleExt, ringExt, littleExt {
-            return ("OK", 0.92)
-        }
-
-        // You — index pointing forward (checked early so it isn't stolen by ILY).
-        // Allow slight hand shake; don't require perfect pinky curl.
-        if pointing, !nearHead, !handRaisedToHead, motion.lateralSwing < 0.10 {
-            if motion.speed < 0.028 {
-                // Toward own chest ≈ Me / I; away / mid ≈ You.
-                if onChest, d.indexTip.y < d.wrist.y + 0.02 {
-                    return ("Me", 0.9)
-                }
-                return ("You", 0.93)
-            }
-        }
-
-        // Where: index-only point wagging side to side.
-        if pointing, motion.lateralSwing > 0.05, motion.speed > 0.01, !motion.isWaving {
-            return ("Where", 0.91)
-        }
-
-        // I love you: thumb+index+pinky out, middle+ring folded, NOT a point.
-        if thumbExt, indexExt, littleExt, middleCurl, ringCurl,
-           !middleExt, !ringExt,
-           distance(d.middleTip, d.middleMCP) < 0.075,
-           distance(d.ringTip, d.ringMCP) < 0.075,
-           distance(d.indexTip, d.littleTip) > 0.12,
-           !nearHead, !handRaisedToHead {
-            return ("I love you", 0.91)
-        }
-
-        // My / Your — flat open palm on chest vs pushed outward.
-        if openPalm, onChest, motion.speed < 0.015, !motion.isWaving {
-            return ("My", 0.88)
-        }
-        if openPalm, !nearHead, d.wrist.y > 0.40, d.wrist.y < 0.65,
-           motion.isPushingOut || (motion.speed > 0.01 && motion.verticalDrift < 0.04) {
-            // Distinguish from Thanks (chin-high).
-            if !nearChin {
-                return ("Your", 0.84)
-            }
-        }
-
-        // See / Look — V (peace) near the eyes moving forward.
-        if indexExt, middleExt, !ringExt, !littleExt, ringCurl, littleCurl, nearHead {
-            if motion.isPushingOut || motion.speed > 0.008 {
-                return ("See", 0.88)
-            }
-            return ("Peace", 0.86)
-        }
-
-        // Peace (V away from head)
-        if indexExt, middleExt, !ringExt, !littleExt, ringCurl, littleCurl, !nearHead {
-            return ("Peace", 0.9)
-        }
-
-        // Water: W handshape (index+middle+ring up, pinky down) at the chin.
-        if indexExt, middleExt, ringExt, !littleExt, littleCurl, nearHead || nearChin {
-            return ("Water", 0.89)
-        }
-
-        // Eat: fingertips bunched together at the mouth.
+        let isFist = indexCurl && middleCurl && ringCurl && littleCurl
+        // A REAL fist: Vision must actually see curled fingertips. A palm
+        // pressed flat on the chest hides its tips, reads as "curled" via
+        // the PIP fallback, and used to turn Please into Sorry.
+        let strongFist = isFist && d.realTipCount >= 3
+        let vShape = indexExt && middleExt && !ringExt && !littleExt && ringCurl && littleCurl
+        let callShape = thumbExt && littleExt && indexCurl && middleCurl && ringCurl
+        let flatHand = extendedCount >= 3 && !indexCurl && !middleCurl
         let tipsBunched =
             distance(d.thumbTip, d.indexTip) < 0.055 &&
             distance(d.indexTip, d.middleTip) < 0.05 &&
             distance(d.middleTip, d.ringTip) < 0.05
-        if tipsBunched, nearHead || nearChin, motion.speed > 0.005 {
-            return ("Eat", 0.88)
+        // Shared motion words.
+        let chopping = motion.verticalDrift > 0.05 && motion.speed > 0.012 &&
+                       motion.verticalDrift > motion.lateralSwing
+        let circling = motion.speed > 0.008 &&
+                       (motion.lateralSwing > 0.03 || motion.verticalDrift > 0.03)
+        // Two-handed STOP: this hand travels DOWN and meets the other
+        // (horizontal base) hand — descending wrist ending at/above the
+        // other wrist, close enough to be in contact.
+        let stopContact = otherWrist.map { other in
+            (motion.isMovingDown || chopping) &&
+            distance(d.wrist, other) < 0.26 &&
+            d.wrist.y > other.y - 0.06
+        } ?? false
+
+        // Hello: salute — flat-ish hand that WAS at the forehead and is now
+        // moving away. Checked before the zone switch because by the time
+        // the motion reads "leaving", the hand is already below the head.
+        if flatHand, motion.isLeavingHead, motion.minHeadDistance < 0.20 {
+            return ("Hello", 0.96)
         }
 
-        // Drink — C / call shape tipping to mouth.
-        if thumbExt, littleExt, indexCurl, middleCurl, ringCurl, nearHead || nearChin {
-            return ("Drink", 0.86)
+        // See: V handshape that WAS at the eyes and is now moving forward.
+        // Also global — mid-arc the wrist has already left the head zone,
+        // and the moving V was being misread as a flat palm → "Thanks".
+        if vShape, motion.isLeavingHead, motion.minHeadDistance < 0.34 {
+            return ("See", 0.92)
         }
 
-        // Know — flat-ish hand tapping forehead (short motion near head).
-        if openPalm || (extendedCount >= 3), nearHead, handRaisedToHead,
-           motion.speed > 0.004, motion.speed < 0.02, !motion.isWaving, !motion.isLeavingHead {
-            return ("Know", 0.84)
+        // OK — unique pinch shape, valid in any zone.
+        if distance(d.thumbTip, d.indexTip) < 0.055, middleExt, ringExt, littleExt {
+            return ("OK", 0.92)
         }
 
-        // Help — thumb+pinky out (or fist on palm approximated as call).
-        if thumbExt, littleExt, !indexExt, !middleExt, !ringExt, indexCurl, middleCurl, ringCurl {
-            return ("Help", 0.88)
+        // I love you — thumb+index+pinky out, middle+ring folded, off the head.
+        if zone != .head, thumbExt, indexExt, littleExt, middleCurl, ringCurl,
+           !middleExt, !ringExt,
+           distance(d.middleTip, d.middleMCP) < 0.075,
+           distance(d.ringTip, d.ringMCP) < 0.075,
+           distance(d.indexTip, d.littleTip) > 0.12 {
+            return ("I love you", 0.91)
         }
 
-        // Yes — fist with thumb up nodding.
-        if thumbExt, indexCurl, middleCurl, ringCurl, littleCurl {
-            if d.thumbTip.y > d.wrist.y + 0.05 {
-                return ("Yes", 0.92)
-            }
-            if d.thumbTip.y < d.wrist.y - 0.03 {
-                return ("No", 0.9)
-            }
-        }
-
-        // No — index+middle extended closing toward thumb (classic ASL no).
-        if indexExt, middleExt, !ringExt, !littleExt, ringCurl, littleCurl,
-           distance(d.indexTip, d.thumbTip) < 0.09 || distance(d.middleTip, d.thumbTip) < 0.09 {
-            return ("No", 0.88)
-        }
-
-        // Fine — open hand, thumb taps chest.
-        if openPalm, onChest, thumbExt, motion.speed < 0.02 {
-            return ("Fine", 0.82)
-        }
-
-        // Thanks: open palm at chin moving out/down.
-        if openPalm, nearChin, motion.isPushingOut || motion.isLeavingHead || motion.speed > 0.008 {
-            return ("Thanks", 0.88)
-        }
-
-        // Please: open palm circling on the chest.
-        if openPalm, onChest,
-           motion.lateralSwing > 0.035, motion.verticalDrift > 0.025, !motion.isWaving {
-            return ("Please", 0.86)
-        }
-
-        // Stop — flat hand chopping (open palm, downward motion mid-frame).
-        if openPalm, onChest, motion.verticalDrift > 0.05, motion.speed > 0.012, !motion.isWaving {
-            return ("Stop", 0.84)
-        }
-
-        // Wave: near the head → Hello; lower → Goodbye.
-        if openPalm, motion.isWaving {
-            if nearHead || handRaisedToHead || (head == nil && d.wrist.y > 0.5) {
+        switch zone {
+        case .head:
+            if flatHand, handRaisedToHead, motion.isWaving {
                 return ("Hello", 0.93)
             }
-            return ("Goodbye", 0.9)
-        }
-
-        // Goodbye without a big wave — open palm pushed away mid/low.
-        if openPalm, !nearHead, d.wrist.y < 0.55, motion.isPushingOut {
-            return ("Goodbye", 0.82)
-        }
-
-        // Sorry / Yes-like fist on chest.
-        if indexCurl, middleCurl, ringCurl, littleCurl, !thumbExt {
-            let tipsNear =
-                distance(d.indexTip, d.indexMCP) < 0.09 &&
-                distance(d.middleTip, d.middleMCP) < 0.09 &&
-                distance(d.ringTip, d.ringMCP) < 0.09
-            if tipsNear {
-                if onChest { return ("Sorry", 0.88) }
-                return ("Yes", 0.8) // nodding fist without clear thumb
+            if flatHand, handRaisedToHead, headDistance < 0.22 {
+                return ("Hello", 0.9)
             }
-        }
+            if vShape {
+                return (motion.isPushingOut || motion.speed > 0.008)
+                    ? ("See", 0.88) : ("Peace", 0.86)
+            }
+            if indexExt, middleExt, ringExt, !littleExt, littleCurl {
+                return ("Water", 0.89)
+            }
+            if tipsBunched, motion.speed > 0.005 {
+                return ("Eat", 0.88)
+            }
+            if callShape {
+                return ("Drink", 0.86)
+            }
+            if flatHand, handRaisedToHead,
+               motion.speed > 0.004, motion.speed < 0.02,
+               !motion.isWaving, !motion.isLeavingHead {
+                return ("Know", 0.84)
+            }
 
-        // Go — index pointing forward with outward motion.
-        if pointing, motion.isPushingOut || (motion.speed > 0.015 && !motion.isWaving) {
-            return ("Go", 0.83)
-        }
+        case .chin:
+            // V at eye level (the wrist of a V held at the eyes sits in
+            // this band): moving out = See, held still = Peace.
+            if vShape {
+                if motion.isPushingOut || motion.isLeavingHead || motion.speed > 0.01 {
+                    return ("See", 0.88)
+                }
+                return ("Peace", 0.84)
+            }
+            // Thanks: open palm at the chin moving outward.
+            if flatHand, motion.isLeavingHead || motion.isPushingOut {
+                return ("Thanks", 0.9)
+            }
+            if indexExt, middleExt, ringExt, !littleExt, littleCurl {
+                return ("Water", 0.89)
+            }
+            if tipsBunched, motion.speed > 0.005 {
+                return ("Eat", 0.88)
+            }
+            if callShape {
+                return ("Drink", 0.86)
+            }
 
-        // Come — index beckoning (point + toward body / vertical motion).
-        if pointing, onChest, motion.verticalDrift > 0.04 {
-            return ("Come", 0.82)
+        case .chest:
+            // Two-handed STOP: flat hand descending onto the base hand.
+            // Checked first — the chop would otherwise read as Please.
+            if flatHand, stopContact {
+                return ("Stop", 0.93)
+            }
+            // Sorry needs REAL fingertip evidence of a fist; a palm flat
+            // on the chest with hidden tips must not land here.
+            if strongFist {
+                return ("Sorry", 0.9)
+            }
+            if flatHand {
+                // Thanks finishes its arc here — don't let Please steal it.
+                if motion.isLeavingHead, motion.minHeadDistance < 0.30 {
+                    return ("Thanks", 0.88)
+                }
+                if chopping {
+                    return ("Stop", 0.84)
+                }
+                if circling {
+                    return ("Please", 0.88)
+                }
+                // Still hand: fingers spread = Fine (5-hand), together = My.
+                if distance(d.indexTip, d.littleTip) > 0.14, thumbExt {
+                    return ("Fine", 0.85)
+                }
+                return ("My", 0.88)
+            }
+            // Ambiguous shape (tips hidden — palm probably pressed to the
+            // chest) moving in circles: that's Please, not Sorry.
+            if !strongFist, !pointing, circling, !chopping {
+                return ("Please", 0.84)
+            }
+            if pointing {
+                if motion.verticalDrift > 0.05, motion.speed > 0.012 {
+                    return ("Come", 0.84)
+                }
+                // Tip clearly below the wrist = pointing at own chest.
+                if d.indexTip.y < d.wrist.y - 0.03 {
+                    return ("Me", 0.9)
+                }
+                if motion.lateralSwing > 0.05, motion.speed > 0.01 {
+                    return ("Where", 0.9)
+                }
+                if motion.speed < 0.02 {
+                    return ("You", 0.9)
+                }
+            }
+
+        case .neutral:
+            // Two-handed STOP can also land here when the hands sit lower
+            // or off to the side of the strict chest band.
+            if flatHand, stopContact, hasPerson {
+                return ("Stop", 0.9)
+            }
+            if pointing {
+                if motion.lateralSwing > 0.05, motion.speed > 0.01 {
+                    return ("Where", 0.91)
+                }
+                if hasPerson, motion.isPushingOut, !motion.isWaving {
+                    return ("Go", 0.83)
+                }
+                if motion.lateralSwing < 0.05, motion.speed < 0.02 {
+                    return ("You", 0.93)
+                }
+            }
+            if vShape {
+                // Index+middle snapping down onto the thumb = No.
+                if distance(d.indexTip, d.thumbTip) < 0.09 || distance(d.middleTip, d.thumbTip) < 0.09 {
+                    return ("No", 0.88)
+                }
+                return ("Peace", 0.9)
+            }
+            if callShape {
+                return ("Help", 0.88)
+            }
+            if thumbExt, isFist {
+                if d.thumbTip.y > d.wrist.y + 0.05 {
+                    return ("Yes", 0.92)
+                }
+                if d.thumbTip.y < d.wrist.y - 0.03 {
+                    return ("No", 0.9)
+                }
+            }
+            if strongFist, !thumbExt, hasPerson {
+                return ("Yes", 0.8) // nodding fist, thumb hidden
+            }
+            if openPalm, hasPerson, motion.isWaving {
+                return handRaisedToHead ? ("Hello", 0.93) : ("Goodbye", 0.9)
+            }
+            if openPalm, hasPerson, motion.isPushingOut {
+                return ("Your", 0.84)
+            }
         }
 
         return nil
